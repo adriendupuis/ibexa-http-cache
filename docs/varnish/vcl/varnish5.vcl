@@ -77,6 +77,13 @@ sub vcl_recv {
 
 // Called when a cache lookup is successful. The object being hit may be stale: It can have a zero or negative ttl with only grace or keep time left.
 sub vcl_hit {
+    set req.http.X-Cache = "hit";
+    set req.http.X-Cache-Hits = obj.hits;
+    set req.http.X-Cache-TTL = obj.ttl;
+    if (obj.ttl <= 0s && obj.grace > 0s) {
+        set req.http.X-Cache = "hit graced";
+    }
+
    if (obj.ttl >= 0s) {
        // A pure unadulterated hit, deliver it
        return (deliver);
@@ -136,6 +143,14 @@ sub vcl_backend_response {
     if (beresp.http.xkey && beresp.http.x-lang) {
         set beresp.http.xkey = beresp.http.xkey + " " + regsuball(beresp.http.xkey, "(\S+)", "\1" + beresp.http.x-lang);
     }
+}
+
+sub vcl_miss {
+    set req.http.X-Cache = "miss";
+}
+
+sub vcl_pass {
+    set req.http.X-Cache = "pass";
 }
 
 // Handle purge
@@ -316,14 +331,18 @@ sub vcl_deliver {
         }
     }
 
+    if (obj.uncacheable) {
+        set req.http.X-Cache = req.http.X-Cache + " uncacheable" ;
+    } else {
+        set req.http.X-Cache = req.http.X-Cache + " cached" ;
+    }
+
     if (client.ip ~ debuggers) {
         // Add X-Cache header if debugging is enabled
+        set resp.http.X-Cache = req.http.X-Cache;
         if (obj.hits > 0) {
-            set resp.http.X-Cache = "HIT";
             set resp.http.X-Cache-Hits = obj.hits;
             set resp.http.X-Cache-TTL = obj.ttl;
-        } else {
-            set resp.http.X-Cache = "MISS";
         }
     } else {
         // Remove tag headers when delivering to non debug client
